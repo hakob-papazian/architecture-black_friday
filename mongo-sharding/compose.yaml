@@ -1,0 +1,110 @@
+name: mongo-sharding
+
+services:
+  # Сервер конфигурации: хранит метаданные о шардах и чанках
+  configSrv:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    command:
+      [
+        "mongod",
+        "--configsvr",
+        "--replSet",
+        "config_server",
+        "--bind_ip_all",
+        "--port",
+        "27017",
+      ]
+    ports:
+      - 27017:27017
+    volumes:
+      - config-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27017", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Шард 1
+  shard1:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    command:
+      [
+        "mongod",
+        "--shardsvr",
+        "--replSet",
+        "shard1",
+        "--bind_ip_all",
+        "--port",
+        "27018",
+      ]
+    ports:
+      - 27018:27018
+    volumes:
+      - shard1-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27018", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Шард 2
+  shard2:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    command:
+      [
+        "mongod",
+        "--shardsvr",
+        "--replSet",
+        "shard2",
+        "--bind_ip_all",
+        "--port",
+        "27019",
+      ]
+    ports:
+      - 27019:27019
+    volumes:
+      - shard2-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27019", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Роутер: единая точка входа для приложения
+  mongos_router:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    command:
+      [
+        "mongos",
+        "--configdb",
+        "config_server/configSrv:27017",
+        "--bind_ip_all",
+        "--port",
+        "27020",
+      ]
+    ports:
+      - 27020:27020
+    depends_on:
+      configSrv:
+        condition: service_healthy
+      shard1:
+        condition: service_healthy
+      shard2:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27020", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  pymongo_api:
+    image: kazhem/pymongo_api:1.0.0
+    depends_on:
+      - mongos_router
+    ports:
+      - 8080:8080
+    environment:
+      MONGODB_URL: "mongodb://mongos_router:27020"
+      MONGODB_DATABASE_NAME: "somedb"
+
+volumes:
+  config-data:
+  shard1-data:
+  shard2-data:

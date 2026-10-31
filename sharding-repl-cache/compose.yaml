@@ -1,0 +1,132 @@
+name: sharding-repl-cache
+
+x-mongo: &mongo
+  image: dh-mirror.gitverse.ru/mongo:latest
+  restart: unless-stopped
+
+services:
+  # Сервер конфигурации: хранит метаданные о шардах и чанках
+  configSrv:
+    <<: *mongo
+    command: ["mongod", "--configsvr", "--replSet", "config_server", "--bind_ip_all", "--port", "27017"]
+    ports:
+      - 27017:27017
+    volumes:
+      - config-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27017", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Шард 1: replica set shard1 из трёх нод
+  shard1-1:
+    <<: *mongo
+    command: ["mongod", "--shardsvr", "--replSet", "shard1", "--bind_ip_all", "--port", "27018"]
+    volumes:
+      - shard1-1-data:/data/db
+    healthcheck: &shard1-healthcheck
+      test: ["CMD", "mongosh", "--port", "27018", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  shard1-2:
+    <<: *mongo
+    command: ["mongod", "--shardsvr", "--replSet", "shard1", "--bind_ip_all", "--port", "27018"]
+    volumes:
+      - shard1-2-data:/data/db
+    healthcheck: *shard1-healthcheck
+
+  shard1-3:
+    <<: *mongo
+    command: ["mongod", "--shardsvr", "--replSet", "shard1", "--bind_ip_all", "--port", "27018"]
+    volumes:
+      - shard1-3-data:/data/db
+    healthcheck: *shard1-healthcheck
+
+  # Шард 2: replica set shard2 из трёх нод
+  shard2-1:
+    <<: *mongo
+    command: ["mongod", "--shardsvr", "--replSet", "shard2", "--bind_ip_all", "--port", "27019"]
+    volumes:
+      - shard2-1-data:/data/db
+    healthcheck: &shard2-healthcheck
+      test: ["CMD", "mongosh", "--port", "27019", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  shard2-2:
+    <<: *mongo
+    command: ["mongod", "--shardsvr", "--replSet", "shard2", "--bind_ip_all", "--port", "27019"]
+    volumes:
+      - shard2-2-data:/data/db
+    healthcheck: *shard2-healthcheck
+
+  shard2-3:
+    <<: *mongo
+    command: ["mongod", "--shardsvr", "--replSet", "shard2", "--bind_ip_all", "--port", "27019"]
+    volumes:
+      - shard2-3-data:/data/db
+    healthcheck: *shard2-healthcheck
+
+  # Роутер: единая точка входа для приложения
+  mongos_router:
+    <<: *mongo
+    command: ["mongos", "--configdb", "config_server/configSrv:27017", "--bind_ip_all", "--port", "27020"]
+    ports:
+      - 27020:27020
+    depends_on:
+      configSrv:
+        condition: service_healthy
+      shard1-1:
+        condition: service_healthy
+      shard1-2:
+        condition: service_healthy
+      shard1-3:
+        condition: service_healthy
+      shard2-1:
+        condition: service_healthy
+      shard2-2:
+        condition: service_healthy
+      shard2-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27020", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Кеш для ответов приложения
+  redis:
+    image: dh-mirror.gitverse.ru/redis:latest
+    restart: unless-stopped
+    ports:
+      - 6379:6379
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      start_period: 5s
+
+  pymongo_api:
+    image: kazhem/pymongo_api:1.0.0
+    depends_on:
+      mongos_router:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    ports:
+      - 8080:8080
+    environment:
+      MONGODB_URL: "mongodb://mongos_router:27020"
+      MONGODB_DATABASE_NAME: "somedb"
+      REDIS_URL: "redis://redis:6379"
+
+volumes:
+  config-data:
+  shard1-1-data:
+  shard1-2-data:
+  shard1-3-data:
+  shard2-1-data:
+  shard2-2-data:
+  shard2-3-data:
+  redis-data:
